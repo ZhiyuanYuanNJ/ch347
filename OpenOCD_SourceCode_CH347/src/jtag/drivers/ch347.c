@@ -401,6 +401,9 @@ static int ch347_open_device(void)
 	if (strncmp("55DD", pidstr, 4) == 0) {
 		ch347.chip_variant = CH347T;
 	}
+	if (strncmp("55DB", pidstr, 4) == 0) {
+		ch347.chip_variant = CH347T;
+	}
 	if (swd_mode) {
 		ch347.swclk_5mhz_supported = true;
 	}
@@ -827,8 +830,11 @@ static int ch347_srst_enable(void)
 	if (retval != ERROR_OK) {
 		return retval;
 	}
-	uint8_t init_result = 0;
+	uint8_t init_result = 1;
 	retval = ch347_single_read_get_byte(0, &init_result);
+	if (retval != ERROR_OK || init_result != 0) {
+		return ERROR_FAIL;
+	}
 	return retval;
 }
 
@@ -1918,6 +1924,11 @@ static int ch347_speed_set(int speed_index)
 		return retval;
 	}
 
+	if (ch347.chip_variant != CH347T) {
+		if (ch347_srst_enable() != ERROR_OK) {
+			LOG_ERROR("ch347 enable srst Error.");
+		}
+	}
 	return ERROR_OK;
 }
 
@@ -2195,11 +2206,7 @@ static int ch347_init(void)
 
 		retval = ch347_swd_init_cmd(1);
 	}
-	if (ch347.chip_variant != CH347T) {
-		if (ch347_srst_enable() != ERROR_OK) {
-			LOG_ERROR("ch347 enable srst Error.");
-		}
-	}
+	
 	return retval;
 }
 
