@@ -12,7 +12,6 @@
 #include <helper/time_support.h>
 #include <jtag/jtag.h>
 #include "target/target.h"
-#include "target/target_type.h"
 #include "rtos.h"
 #include "helper/log.h"
 #include "helper/types.h"
@@ -110,17 +109,17 @@ static int embkernel_create(struct target *target)
 {
 	size_t i = 0;
 	while ((i < ARRAY_SIZE(embkernel_params_list)) &&
-			(strcmp(embkernel_params_list[i].target_name, target->type->name) != 0))
+			(strcmp(embkernel_params_list[i].target_name, target_type_name(target)) != 0))
 		i++;
 
 	if (i >= ARRAY_SIZE(embkernel_params_list)) {
 		LOG_WARNING("Could not find target \"%s\" in embKernel compatibility "
-				"list", target->type->name);
-		return -1;
+				"list", target_type_name(target));
+		return ERROR_FAIL;
 	}
 
 	target->rtos->rtos_specific_params = (void *) &embkernel_params_list[i];
-	return 0;
+	return ERROR_OK;
 }
 
 static int embkernel_get_tasks_details(struct rtos *rtos, int64_t iterable, const struct embkernel_params *param,
