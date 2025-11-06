@@ -509,7 +509,7 @@ static int ch347_open_device(void)
 	const uint16_t *ch347_vids = custom_ch347_vids[0] != 0 ? custom_ch347_vids : default_ch347_vids;
 	const uint16_t *ch347_pids = custom_ch347_pids[0] != 0 ? custom_ch347_pids : default_ch347_pids;
 
-	int retval = jtag_libusb_open(ch347_vids, ch347_pids, &ch347_handle, NULL);
+	int retval = jtag_libusb_open(ch347_vids, ch347_pids, ch347_device_desc, &ch347_handle, NULL);
 	if (retval != ERROR_OK)	{
 		char error_message[256];
 		snprintf(error_message, sizeof(error_message), "CH347 not found. Tried VID/PID pairs: ");
@@ -550,12 +550,13 @@ static int ch347_open_device(void)
 	}	else {
 		ch347.chip_variant = CH347F;
 	}
+
 	char firmware_version;
 	retval = jtag_libusb_control_transfer(ch347_handle,
 		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE,
 		VENDOR_VERSION, 0, 0, &firmware_version, sizeof(firmware_version),
-		USB_READ_TIMEOUT);
-	if (retval < sizeof(firmware_version)) {
+		USB_WRITE_TIMEOUT, NULL);
+	if (retval != ERROR_OK) {
 		LOG_ERROR("CH347 unable to get firmware version");
 		jtag_libusb_close(ch347_handle);
 		return retval;
@@ -593,6 +594,7 @@ static int ch347_open_device(void)
 	} else {
 		ch347.use_bitwise_mode = false;
 	}
+
 	if (ch347.chip_variant == CH347T) {
 		if (swd_mode) {
 			ch347.swclk_5mhz_supported = ch347_device_descriptor.bcdDevice >= 0x544;
