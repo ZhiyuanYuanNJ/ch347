@@ -286,25 +286,26 @@ unsigned long USBC_PACKET;
 #define HW_TDO_BUF_SIZE              4096
 //设备信息
 typedef struct _DEV_INFOR{
-	UCHAR    iIndex;                 // 当前打开序号
-	UCHAR    DevicePath[MAX_PATH];   // 设备链接名,用于CreateFile
-	UCHAR    UsbClass;               // 0:CH347_USB_CH341, 2:CH347_USB_HID,3:CH347_USB_VCP
-	UCHAR    FuncType;               // 0:CH347_FUNC_UART,1:CH347_FUNC_SPI_I2C,2:CH347_FUNC_JTAG_I2C
-	CHAR     DeviceID[64];           // USB\VID_xxxx&PID_xxxx
-	UCHAR    ChipMode;               // 芯片模式,0:Mode0(UART0/1); 1:Mode1(Uart1+SPI+I2C); 2:Mode2(HID Uart1+SPI+I2C) 3:Mode3(Uart1+Jtag+IIC)
-	HANDLE   DevHandle;              // 设备句柄
-	USHORT   BulkOutEndpMaxSize;     // 上传端点大小
-	USHORT   BulkInEndpMaxSize;      // 下传端点大小
-	UCHAR    UsbSpeedType;           // USB速度类型，0:FS,1:HS,2:SS
-	UCHAR    CH347IfNum;             // 设备接口号: 0:UART,1:SPI/IIC/JTAG/GPIO
-	UCHAR    DataUpEndp;             // 端点地址
-	UCHAR    DataDnEndp;             // 端点地址
-	CHAR     ProductString[64];      // USB产品字符串
-	CHAR     ManufacturerString[64]; // USB厂商字符串
-	ULONG    WriteTimeout;           // USB写超时
-	ULONG    ReadTimeout;            // USB读超时
-	CHAR     FuncDescStr[64];        // 接口功能描述符
-	UCHAR    FirewareVer;            // 固件版本
+	UCHAR iIndex;                // Current open index
+    UCHAR DevicePath[MAX_PATH];  // Device link name, used for CreateFile
+    UCHAR UsbClass;              // 0:CH347_USB_CH341, 2:CH347_USB_HID,3:CH347_USB_VCP
+    UCHAR FuncType;              // 0:CH347_FUNC_UART, 1:CH347_FUNC_SPI_I2C, 2:CH347_FUNC_JTAG_I2C
+    CHAR DeviceID[64];           // USB\VID_xxxx&PID_xxxx
+    UCHAR ChipMode;              // Chip Mode, 0:Mode0(UART0/1); 1:Mode1(Uart1+SPI+I2C); 2:Mode2(HID Uart1+SPI+I2C) 3:Mode3(Uart1+Jtag+I2C) 4:CH347F(Uart*2+Jtag/SPI/I2C)
+    HANDLE DevHandle;            // Device handle
+    USHORT BulkOutEndpMaxSize;   // Upload endpoint size
+    USHORT BulkInEndpMaxSize;    // downstream endpoint size
+    UCHAR UsbSpeedType;          // USB Speed type, 0:FS,1:HS,2:SS
+    UCHAR CH347IfNum;            // USB interface number: CH347T: IF0:UART;   IF1:SPI/IIC/JTAG/GPIO
+                                 //                       CH347F: IF0:UART0;  IF1:UART1; IF2:SPI/IIC/JTAG/GPIO
+    UCHAR DataUpEndp;            // The endpoint address
+    UCHAR DataDnEndp;            // The endpoint address
+    CHAR ProductString[64];      // Product string in USB descriptor
+    CHAR ManufacturerString[64]; // Manufacturer string in USB descriptor
+    ULONG WriteTimeout;          // USB write timeout
+    ULONG ReadTimeout;           // USB read timeout
+    CHAR FuncDescStr[64];        // Interface functions
+    UCHAR FirewareVer;           // Firmware version
 }mDeviceInforS,*mPDeviceInforS;
 
 typedef int(__stdcall  * pCH347OpenDevice)(unsigned long iIndex);
@@ -368,7 +369,6 @@ static int ch347_open_device(void)
 {
 	DevIsOpened = INVALID_HANDLE_VALUE;
 	unsigned char dev_info[64];
-	unsigned char bcd_info[16];
 	ch347.chip_variant = CH347F;
 	if (ch347_device_desc != NULL) {
 		for (int i = 0; i < DEVICE_MAX_NUMBER; i++) {
@@ -509,7 +509,7 @@ static int ch347_open_device(void)
 	const uint16_t *ch347_vids = custom_ch347_vids[0] != 0 ? custom_ch347_vids : default_ch347_vids;
 	const uint16_t *ch347_pids = custom_ch347_pids[0] != 0 ? custom_ch347_pids : default_ch347_pids;
 
-	int retval = jtag_libusb_open(ch347_vids, ch347_pids, &ch347_handle, NULL);
+	int retval = jtag_libusb_open(ch347_vids, ch347_pids, ch347_device_desc, &ch347_handle, NULL);
 	if (retval != ERROR_OK)	{
 		char error_message[256];
 		snprintf(error_message, sizeof(error_message), "CH347 not found. Tried VID/PID pairs: ");
@@ -550,12 +550,13 @@ static int ch347_open_device(void)
 	}	else {
 		ch347.chip_variant = CH347F;
 	}
+
 	char firmware_version;
 	retval = jtag_libusb_control_transfer(ch347_handle,
 		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE,
 		VENDOR_VERSION, 0, 0, &firmware_version, sizeof(firmware_version),
-		USB_READ_TIMEOUT);
-	if (retval < sizeof(firmware_version)) {
+		USB_WRITE_TIMEOUT, NULL);
+	if (retval != ERROR_OK) {
 		LOG_ERROR("CH347 unable to get firmware version");
 		jtag_libusb_close(ch347_handle);
 		return retval;
@@ -593,6 +594,7 @@ static int ch347_open_device(void)
 	} else {
 		ch347.use_bitwise_mode = false;
 	}
+
 	if (ch347.chip_variant == CH347T) {
 		if (swd_mode) {
 			ch347.swclk_5mhz_supported = ch347_device_descriptor.bcdDevice >= 0x544;
@@ -1765,13 +1767,13 @@ static int ch347_sleep(int us)
  */
 static int ch347_execute_queue(struct jtag_command *cmd_queue)
 {
-	struct jtag_command *cmd;
-	int ret = ERROR_OK;
+	struct jtag_command *cmd = cmd_queue;
+
 	int retval = ch347_activity_led_set(LED_ON);
 	if (retval != ERROR_OK)
 		return retval;
-	for (cmd = jtag_command_queue; ret == ERROR_OK && cmd;
-		cmd = cmd->next) {
+
+	while (retval == ERROR_OK && cmd) {
 		switch (cmd->type) {
 		case JTAG_RUNTEST:
 			retval = ch347_scratchpad_add_run_test(cmd->cmd.runtest->num_cycles, cmd->cmd.runtest->end_state);
@@ -1799,7 +1801,8 @@ static int ch347_execute_queue(struct jtag_command *cmd_queue)
 			retval = ERROR_FAIL;
 			break;
 		}
-
+				
+		cmd = cmd->next;
 	}
 
 	if (retval != ERROR_OK)
@@ -2176,6 +2179,7 @@ static int ch347_init(void)
 		}
 	}
 	#endif
+
 	int retval = ch347_open_device();
 
 	if (retval != ERROR_OK) {
@@ -2735,8 +2739,6 @@ static const struct swd_driver ch347_swd = {
 	.run = ch347_swd_run_queue,
 };
 
-static const char *const ch347_transports[] = {"jtag", "swd", NULL};
-
 static struct jtag_interface ch347_interface = {
 	.supported = DEBUG_CAP_TMS_SEQ,
 	.execute_queue = ch347_execute_queue,
@@ -2744,9 +2746,10 @@ static struct jtag_interface ch347_interface = {
 
 struct adapter_driver ch347_adapter_driver = {
 	.name = "ch347",
+	.transport_ids = TRANSPORT_JTAG | TRANSPORT_SWD,
+	.transport_preferred_id = TRANSPORT_JTAG,
 	.commands = ch347_command_handlers,
 
-	.transports = ch347_transports,
 	.init = ch347_init,
 	.quit = ch347_quit,
 	.reset = ch347_reset,
